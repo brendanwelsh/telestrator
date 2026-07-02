@@ -12,7 +12,8 @@ cmake --build --preset windows-x64
 ```
 
 Drop `build_x64/rundir/RelWithDebInfo/telestrator.dll` into OBS's
-`obs-plugins/64bit/` and restart OBS. The project is based on the official
+`obs-plugins/64bit/`, copy `data/locale/` to
+`data/obs-plugins/telestrator/locale/`, and restart OBS. The project is based on the official
 [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate), so the
 macOS / Linux presets exist but aren't exercised yet. Porting help is welcome:
 the input path is pure Qt, so it should be close.

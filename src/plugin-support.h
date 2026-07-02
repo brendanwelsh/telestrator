@@ -1,6 +1,6 @@
 /*
-Plugin Name
-Copyright (C) <Year> <Developer> <Email Address>
+obs-telestrator
+Copyright (C) 2026 Brendan Welsh <https://github.com/brendanwelsh/obs-telestrator>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by

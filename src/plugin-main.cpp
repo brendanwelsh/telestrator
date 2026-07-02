@@ -95,9 +95,17 @@ namespace {
 // Tools / constants
 // ---------------------------------------------------------------------------
 enum Tool {
-	TOOL_PEN = 1, TOOL_LINE = 2, TOOL_ARROW = 3, TOOL_RECT = 4,
-	TOOL_ELLIPSE = 5, TOOL_DBLARROW = 6, TOOL_CURVEDARROW = 7, TOOL_SPOTLIGHT = 8,
-	TOOL_FIRSTDOWN = 9, TOOL_CONE = 10, TOOL_VERTICAL = 11
+	TOOL_PEN = 1,
+	TOOL_LINE = 2,
+	TOOL_ARROW = 3,
+	TOOL_RECT = 4,
+	TOOL_ELLIPSE = 5,
+	TOOL_DBLARROW = 6,
+	TOOL_CURVEDARROW = 7,
+	TOOL_SPOTLIGHT = 8,
+	TOOL_FIRSTDOWN = 9,
+	TOOL_CONE = 10,
+	TOOL_VERTICAL = 11
 };
 constexpr int TOOL_COUNT = 11;
 
@@ -120,8 +128,10 @@ constexpr int INDICATOR_Y = 34;
 // Stored as 0xAABBGGRR so vec4_from_rgba (low byte -> red) yields the color.
 // Blue is 0xFFFFB728 = RGB(40,183,255); the prior 0xFFB7FF28 had its B/G bytes
 // transposed and decoded to a turquoise green (a near-duplicate of Cyan).
-uint32_t g_color_array[8] = {0xFF28FFFF, 0xFF0000FF, 0xFF00FF50, 0xFFFFB728,
-			     0xFFFFFFFF, 0xFF0080FF, 0xFFFFFF00, 0xFF000000};
+// Atomic: slot 8 (custom) is written from the color dialog / websocket thread
+// while the graphics thread reads for stroke starts.
+std::atomic<uint32_t> g_color_array[8] = {0xFF28FFFF, 0xFF0000FF, 0xFF00FF50, 0xFFFFB728,
+					  0xFFFFFFFF, 0xFF0080FF, 0xFFFFFF00, 0xFF000000};
 constexpr int COLOR_COUNT = 8;
 
 // ---------------------------------------------------------------------------
@@ -140,27 +150,29 @@ struct Stroke {
 	std::vector<Vec2> points;
 	float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
 	float born = 0, life = 0, fade = 0;
-	bool dashed = false;     // dashed style (shapes only)
-	bool filled = false;     // filled interior (rect/ellipse)
-	float opacity = 1.0f;    // <1 for highlighter (translucent) strokes
+	bool dashed = false;  // dashed style (shapes only)
+	bool filled = false;  // filled interior (rect/ellipse)
+	float opacity = 1.0f; // <1 for highlighter (translucent) strokes
 };
 
 // ---------------------------------------------------------------------------
 // Engine-wide drawing state (file scope == one logical telestrator)
 // ---------------------------------------------------------------------------
-bool g_drawing_enabled = false; // the master "armed" toggle
-bool g_eraser = false;
-bool g_laser_mode = false;
-int g_autofade_secs = 0;
-bool g_show_indicator = false;
+// Atomics: written from the hotkey / UI / websocket threads (dispatch_cmd,
+// dock buttons, settings dialog), read every frame on the graphics thread.
+std::atomic<bool> g_drawing_enabled{false}; // the master "armed" toggle
+std::atomic<bool> g_eraser{false};
+std::atomic<bool> g_laser_mode{false};
+std::atomic<int> g_autofade_secs{0};
+std::atomic<bool> g_show_indicator{false};
 
-int g_tool = TOOL_PEN;
-int g_color_index = 5; // 1-based; default White
-int g_size = 2;
-bool g_dashed = false;      // dashed style toggle (applies to shape strokes)
-bool g_filled = false;      // filled-shape toggle (rect/ellipse)
-bool g_highlighter = false; // translucent highlighter strokes
-float g_opacity = 1.0f;     // base opacity for new strokes (transparency control)
+std::atomic<int> g_tool{TOOL_PEN};
+std::atomic<int> g_color_index{5}; // 1-based; default White
+std::atomic<int> g_size{2};
+std::atomic<bool> g_dashed{false};      // dashed style toggle (applies to shape strokes)
+std::atomic<bool> g_filled{false};      // filled-shape toggle (rect/ellipse)
+std::atomic<bool> g_highlighter{false}; // translucent highlighter strokes
+std::atomic<float> g_opacity{1.0f};     // base opacity for new strokes (transparency control)
 constexpr int BRUSH_MAX = 12;
 
 // CANONICAL input: the "Telestrator Draw" dock. It writes canvas coords + button
@@ -201,24 +213,23 @@ std::atomic<bool> g_legacy_cursor_input{false};
 std::atomic<bool> g_prev_valid{false};
 std::atomic<float> g_prev_l{0.0f}, g_prev_t{0.0f}, g_prev_w{0.0f}, g_prev_h{0.0f};
 
-std::vector<Stroke> g_strokes;     // committed permanent strokes
-std::vector<Stroke> g_redo;        // redo stack
-std::vector<Stroke> g_temp;        // transient fading strokes
-std::unique_ptr<Stroke> g_active;  // stroke currently being drawn
+std::vector<Stroke> g_strokes;    // committed permanent strokes
+std::vector<Stroke> g_redo;       // redo stack
+std::vector<Stroke> g_temp;       // transient fading strokes
+std::unique_ptr<Stroke> g_active; // stroke currently being drawn
 
 float g_clock = 0.0f; // monotonic seconds from video_tick dt
 
-// Projector window-title keyword (localized installs can override).
+// Projector window-title keyword (const after load; read from UI + legacy poll).
 std::string g_projector_name = "Projector";
-std::string g_scene_name;
 
 struct vec4 g_eraser_v4;
 
-// Command flags (set by hotkey handlers, processed in video_tick).
-bool f_clear = false, f_colorswap = false, f_sizetoggle = false, f_toolcycle = false;
-bool f_undo = false, f_redo = false, f_toggle = false, f_laser = false, f_sizedown = false;
-bool f_arm_on = false, f_arm_off = false, f_close_proj = false;
-std::string g_pending_close_match; // empty == close all
+// Command flags (set on the hotkey / UI / websocket threads, consumed in
+// video_tick with exchange(false) so no press can be lost or double-run).
+std::atomic<bool> f_clear{false}, f_colorswap{false}, f_sizetoggle{false}, f_toolcycle{false};
+std::atomic<bool> f_undo{false}, f_redo{false}, f_toggle{false}, f_laser{false}, f_sizedown{false};
+std::atomic<bool> f_arm_on{false}, f_arm_off{false};
 
 // ---------------------------------------------------------------------------
 // Per-source data
@@ -234,6 +245,12 @@ struct TelSource {
 	bool has_mouse = false;
 	float mouse_x = 0, mouse_y = 0;
 };
+
+// The instance driving the shared engine state (strokes/undo/clock). Claimed by
+// the first source to tick; extra instances mirror its textures in video_render.
+// Only touched on the graphics thread (tick/render) and inside tel_destroy's
+// obs_enter_graphics bracket, which excludes the graphics thread.
+TelSource *g_engine = nullptr;
 
 // ---------------------------------------------------------------------------
 // Vertex-buffer cache: a filled disc "dot" (round caps/joins) + a unit "line"
@@ -965,7 +982,7 @@ void render_overlay(TelSource *d)
 	if (g_drawing_enabled && g_show_indicator) {
 		Stroke ind;
 		ind.tool = TOOL_PEN;
-		ind.color = g_eraser ? 0xFFCCCCCC : g_color_array[g_color_index - 1];
+		ind.color = g_eraser ? 0xFFCCCCCC : g_color_array[g_color_index - 1].load();
 		ind.size = INDICATOR_SIZE;
 		ind.eraser = false;
 		ind.points.push_back({(float)INDICATOR_X, (float)INDICATOR_Y});
@@ -979,18 +996,30 @@ void render_overlay(TelSource *d)
 void begin_stroke(TelSource *d, float mx, float my)
 {
 	bool temp = (g_laser_mode || (g_autofade_secs > 0)) && !g_eraser;
-	int t = g_eraser ? TOOL_PEN : g_tool;
+	int t = g_eraser ? TOOL_PEN : g_tool.load();
 	g_active = std::make_unique<Stroke>();
 	g_active->tool = t;
 	g_active->color = g_color_array[g_color_index - 1];
 	g_active->size = g_size;
 	g_active->eraser = g_eraser;
 	g_active->temporary = temp;
+	if (temp) {
+		// Fade timing is captured at press so toggling laser / auto-fade
+		// mid-stroke can't zero it at commit and silently vanish the stroke.
+		if (g_laser_mode) {
+			g_active->life = LASER_LIFE;
+			g_active->fade = LASER_FADE;
+		} else {
+			int secs = g_autofade_secs;
+			g_active->life = (float)secs;
+			g_active->fade = fminf(0.6f, (float)secs / 2.0f);
+		}
+	}
 	g_active->dashed = g_dashed && !is_freehand(t) && !g_eraser;
 	g_active->filled = g_filled && (t == TOOL_RECT || t == TOOL_ELLIPSE) && !g_eraser;
 	// 0.5: highlighter ink is a single uniform layer now (scratch-composited),
 	// so it no longer gets the artificial boost of overlapping stamp alpha.
-	g_active->opacity = (g_highlighter && !g_eraser) ? 0.5f : g_opacity;
+	g_active->opacity = (g_highlighter && !g_eraser) ? 0.5f : g_opacity.load();
 	g_active->points.push_back({mx, my});
 	g_active->x0 = mx;
 	g_active->y0 = my;
@@ -1010,14 +1039,7 @@ void commit_stroke(TelSource *d)
 	g_active.reset();
 
 	if (s.temporary) {
-		s.born = g_clock;
-		if (g_laser_mode) {
-			s.life = LASER_LIFE;
-			s.fade = LASER_FADE;
-		} else {
-			s.life = (float)g_autofade_secs;
-			s.fade = fminf(0.6f, (float)g_autofade_secs / 2.0f);
-		}
+		s.born = g_clock; // life/fade were captured at press in begin_stroke
 		g_temp.push_back(std::move(s));
 	} else {
 		bool was_eraser = s.eraser;
@@ -1062,39 +1084,76 @@ void do_redo_now(TelSource *d)
 // ---------------------------------------------------------------------------
 bool window_match(const char *window_name)
 {
-	if (!window_name)
-		return false;
-	if (!g_projector_name.empty() && strstr(window_name, g_projector_name.c_str()))
-		return true;
-	if (!g_scene_name.empty() && strstr(window_name, g_scene_name.c_str()))
-		return true;
-	return false;
+	return window_name && !g_projector_name.empty() && strstr(window_name, g_projector_name.c_str());
 }
 
-void close_projector_windows(const std::string &match_in)
+#ifdef _WIN32
+// True if a top-level window OF THIS PROCESS has `match` in its title.
+bool projector_window_exists(const char *match)
+{
+	DWORD self = GetCurrentProcessId();
+	HWND prev = nullptr;
+	for (int i = 0; i < 4000; i++) {
+		HWND hwnd = FindWindowExA(nullptr, prev, nullptr, nullptr);
+		if (!hwnd)
+			break;
+		DWORD pid = 0;
+		GetWindowThreadProcessId(hwnd, &pid);
+		if (pid == self) {
+			char title[512];
+			int len = GetWindowTextA(hwnd, title, sizeof(title));
+			if (len > 0 && strstr(title, match))
+				return true;
+		}
+		prev = hwnd;
+	}
+	return false;
+}
+#endif
+
+// Close projector windows whose title contains `match` (nullptr/"" == the
+// generic "Projector" keyword). Only windows of THIS process are touched, so a
+// title collision in another app can never close someone else's window. Must
+// run on the UI thread: GetWindowText on a same-process window SendMessages
+// its owning (UI) thread, which would stall or deadlock the graphics thread.
+void close_projector_windows(const char *match_in)
 {
 #ifdef _WIN32
-	std::string match = match_in.empty() ? g_projector_name : match_in;
-	if (match.empty())
+	const char *match = (match_in && *match_in) ? match_in : g_projector_name.c_str();
+	if (!*match)
 		return;
+	DWORD self = GetCurrentProcessId();
 	HWND prev = nullptr;
 	int closed = 0;
 	for (int i = 0; i < 4000; i++) {
 		HWND hwnd = FindWindowExA(nullptr, prev, nullptr, nullptr);
 		if (!hwnd)
 			break;
-		char title[512];
-		int len = GetWindowTextA(hwnd, title, sizeof(title));
-		if (len > 0 && strstr(title, match.c_str())) {
-			PostMessageA(hwnd, WM_CLOSE, 0, 0);
-			closed++;
+		DWORD pid = 0;
+		GetWindowThreadProcessId(hwnd, &pid);
+		if (pid == self) {
+			char title[512];
+			int len = GetWindowTextA(hwnd, title, sizeof(title));
+			if (len > 0 && strstr(title, match)) {
+				PostMessageA(hwnd, WM_CLOSE, 0, 0);
+				closed++;
+			}
 		}
 		prev = hwnd;
 	}
-	obs_log(LOG_INFO, "closed %d projector window(s) matching '%s'", closed, match.c_str());
+	obs_log(LOG_INFO, "closed %d projector window(s) matching '%s'", closed, match);
 #else
 	(void)match_in;
 #endif
+}
+
+// Queue a projector close on the UI thread. `match` must be a string literal
+// (it rides through the task as a raw pointer).
+void queue_close_projectors(const char *match)
+{
+	obs_queue_task(
+		OBS_TASK_UI, [](void *p) { close_projector_windows(static_cast<const char *>(p)); },
+		const_cast<char *>(match), false);
 }
 
 bool valid_position(float cx, float cy, float px, float py, float w, float h)
@@ -1109,69 +1168,48 @@ bool valid_position(float cx, float cy, float px, float py, float w, float h)
 // ---------------------------------------------------------------------------
 void process_commands(TelSource *d)
 {
-	if (f_toggle) {
+	// exchange(false) consumes each flag atomically, so a press landing between
+	// the check and the reset can't be lost.
+	if (f_toggle.exchange(false))
 		g_drawing_enabled = !g_drawing_enabled;
-		f_toggle = false;
-	}
-	if (f_arm_on) {
+	if (f_arm_on.exchange(false))
 		g_drawing_enabled = true;
-		f_arm_on = false;
-	}
-	if (f_arm_off) {
+	if (f_arm_off.exchange(false))
 		g_drawing_enabled = false;
-		f_arm_off = false;
-	}
-	if (f_close_proj) {
-		close_projector_windows(g_pending_close_match);
-		g_pending_close_match.clear();
-		f_close_proj = false;
-	}
-	if (f_clear) {
+	if (f_clear.exchange(false))
 		do_clear(d);
-		f_clear = false;
-	}
-	if (f_colorswap) {
+	if (f_colorswap.exchange(false)) {
 		g_color_index++;
 		if (g_color_index > COLOR_COUNT)
 			g_color_index = 1;
-		f_colorswap = false;
 	}
-	if (f_sizetoggle) {
+	if (f_sizetoggle.exchange(false)) {
 		if (g_size % 2 == 1)
 			g_size += 1;
 		else
 			g_size += 2;
 		if (g_size > BRUSH_MAX)
 			g_size = 2;
-		f_sizetoggle = false;
 	}
-	if (f_toolcycle) {
+	if (f_toolcycle.exchange(false)) {
 		g_tool++;
 		if (g_tool > TOOL_COUNT)
 			g_tool = 1;
-		f_toolcycle = false;
 	}
-	if (f_laser) {
+	if (f_laser.exchange(false))
 		g_laser_mode = !g_laser_mode;
-		f_laser = false;
-	}
-	if (f_sizedown) {
+	if (f_sizedown.exchange(false)) {
 		if (g_size % 2 == 1)
 			g_size -= 1;
 		else
 			g_size -= 2;
 		if (g_size < 2)
 			g_size = BRUSH_MAX;
-		f_sizedown = false;
 	}
-	if (f_undo) {
+	if (f_undo.exchange(false))
 		do_undo_now(d);
-		f_undo = false;
-	}
-	if (f_redo) {
+	if (f_redo.exchange(false))
 		do_redo_now(d);
-		f_redo = false;
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1302,8 +1340,8 @@ void handle_input(TelSource *d)
 		ClientToScreen(window, &origin);
 		RECT rc;
 		GetClientRect(window, &rc);
-		feed_client(d, (float)(raw.x - origin.x), (float)(raw.y - origin.y),
-			    (float)(rc.right - rc.left), (float)(rc.bottom - rc.top));
+		feed_client(d, (float)(raw.x - origin.x), (float)(raw.y - origin.y), (float)(rc.right - rc.left),
+			    (float)(rc.bottom - rc.top));
 		return;
 	}
 
@@ -1312,8 +1350,7 @@ void handle_input(TelSource *d)
 	if (g_prev_valid.load() && strncmp(window_name, "OBS ", 4) == 0) {
 		float pl = g_prev_l.load(), pt = g_prev_t.load();
 		float pw = g_prev_w.load(), ph = g_prev_h.load();
-		if ((float)raw.x >= pl && (float)raw.x < pl + pw && (float)raw.y >= pt &&
-		    (float)raw.y < pt + ph) {
+		if ((float)raw.x >= pl && (float)raw.x < pl + pw && (float)raw.y >= pt && (float)raw.y < pt + ph) {
 			feed_client(d, (float)raw.x - pl, (float)raw.y - pt, pw, ph, PREVIEW_EDGE_SIZE);
 		}
 	}
@@ -1339,6 +1376,11 @@ void make_textures(TelSource *d)
 	d->canvas = gs_texture_create(d->width * SS, d->height * SS, GS_RGBA, 1, nullptr, GS_RENDER_TARGET);
 	d->preview = gs_texture_create(d->width * SS, d->height * SS, GS_RGBA, 1, nullptr, GS_RENDER_TARGET);
 	d->scratch = gs_texture_create(d->width * SS, d->height * SS, GS_RGBA, 1, nullptr, GS_RENDER_TARGET);
+	// Fresh render targets have undefined contents — clear before first use so
+	// recycled GPU memory can't flash as ghost ink on the program output.
+	with_target(d, d->canvas, true, []() {});
+	with_target(d, d->preview, true, []() {});
+	with_target(d, d->scratch, true, []() {});
 	obs_leave_graphics();
 }
 
@@ -1347,7 +1389,7 @@ void make_textures(TelSource *d)
 // ---------------------------------------------------------------------------
 const char *tel_get_name(void *)
 {
-	return "Telestrator";
+	return obs_module_text("SourceName");
 }
 
 void *tel_create(obs_data_t *, obs_source_t *source)
@@ -1371,6 +1413,8 @@ void tel_destroy(void *data)
 {
 	auto *d = static_cast<TelSource *>(data);
 	obs_enter_graphics();
+	if (g_engine == d)
+		g_engine = nullptr; // next instance to tick claims the engine and re-bakes
 	if (d->canvas)
 		gs_texture_destroy(d->canvas);
 	if (d->preview)
@@ -1397,7 +1441,10 @@ uint32_t tel_get_height(void *data)
 void tel_video_render(void *data, gs_effect_t *)
 {
 	auto *d = static_cast<TelSource *>(data);
-	if (!d->canvas)
+	// Mirror instances draw the engine's textures: one shared ink layer no
+	// matter how many telestrator sources the user adds.
+	TelSource *e = g_engine ? g_engine : d;
+	if (!e->canvas)
 		return;
 	gs_effect_t *def = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 	gs_blend_state_push();
@@ -1405,10 +1452,10 @@ void tel_video_render(void *data, gs_effect_t *)
 	// Textures are SS x supersampled; drawing them at canvas size downsamples
 	// through the linear sampler (2x2 box filter) = the anti-aliasing pass.
 	while (gs_effect_loop(def, "Draw"))
-		obs_source_draw(d->canvas, 0, 0, d->width, d->height, false);
-	if (d->preview) {
+		obs_source_draw(e->canvas, 0, 0, e->width, e->height, false);
+	if (e->preview) {
 		while (gs_effect_loop(def, "Draw"))
-			obs_source_draw(d->preview, 0, 0, d->width, d->height, false);
+			obs_source_draw(e->preview, 0, 0, e->width, e->height, false);
 	}
 	gs_blend_state_pop();
 }
@@ -1416,20 +1463,38 @@ void tel_video_render(void *data, gs_effect_t *)
 void tel_video_tick(void *data, float seconds)
 {
 	auto *d = static_cast<TelSource *>(data);
-	g_clock += seconds;
+	// One instance drives the shared engine state; the first to tick claims it.
+	// If the engine instance was destroyed, the next tick promotes this one and
+	// re-bakes the committed ink into its canvas.
+	bool rebake = false;
+	if (!g_engine) {
+		g_engine = d;
+		rebake = true;
+	}
 
 	struct obs_video_info ovi;
 	if (obs_get_video_info(&ovi) && (ovi.base_width != d->width || ovi.base_height != d->height)) {
 		d->width = ovi.base_width;
 		d->height = ovi.base_height;
-		make_textures(d);
+		if (d == g_engine) {
+			make_textures(d);
+			rebake = true; // fresh targets: repaint committed strokes below
+		}
 	}
+	if (d != g_engine)
+		return; // mirror: size bookkeeping only; render uses the engine's textures
+
+	g_clock += seconds;
 	if (!d->canvas)
 		return;
+	if (rebake)
+		rebuild_texture(d);
 
 	process_commands(d);
 
-	if (!(d->active || g_drawing_enabled))
+	// Keep rendering while temp strokes are fading (or a stroke is mid-flight)
+	// even when disarmed, so the studio-mode preview can't freeze stale ink.
+	if (!(d->active || g_drawing_enabled) && g_temp.empty() && !g_active)
 		return;
 
 	if (g_drawing_enabled) {
@@ -1489,9 +1554,6 @@ void tel_video_tick(void *data, float seconds)
 void tel_activate(void *data)
 {
 	auto *d = static_cast<TelSource *>(data);
-	// NB: the scene-name match fallback (window_match) needs obs-frontend-api to
-	// read the current scene; we link libobs core only for now, so we rely on the
-	// "Projector" keyword match instead. Revisit when the native dock lands.
 	d->active = true;
 }
 
@@ -1507,75 +1569,115 @@ obs_source_info telestrator_source_info = {};
 // Hotkeys — one dispatcher, command code passed as the hotkey's data pointer.
 // ---------------------------------------------------------------------------
 enum Cmd {
-	C_CLEAR, C_COLORSWAP, C_SIZETOGGLE, C_ERASERTOGGLE, C_TOGGLE, C_TOOLCYCLE,
-	C_UNDO, C_REDO, C_LASER, C_SIZEDOWN, C_ARMON, C_ARMOFF,
-	C_CLOSE_ALL, C_CLOSE_PROGRAM, C_CLOSE_PREVIEW, C_CLOSE_MULTIVIEW, C_OPEN_PROJECTOR,
-	C_TOOL_PEN, C_TOOL_LINE, C_TOOL_ARROW, C_TOOL_RECT, C_TOOL_ELLIPSE,
-	C_COLOR_YELLOW, C_COLOR_RED, C_COLOR_GREEN, C_COLOR_BLUE, C_COLOR_WHITE, C_COLOR_CUSTOM,
-	C_REPLAY, C_REPLAYHIDE,
-	C_SIZE_THIN, C_SIZE_MED, C_SIZE_THICK,
-	C_TOOL_DBLARROW, C_DASH,
-	C_TOOL_CURVEDARROW, C_COLOR_ORANGE, C_COLOR_CYAN,
-	C_FILL, C_HIGHLIGHT, C_OPACITY, C_INDICATOR, C_AUTOFADE,
-	C_TOOL_SPOTLIGHT, C_TOOL_FIRSTDOWN, C_TOOL_CONE, C_TOOL_VERTICAL,
-	C_REPLAY_RESTART, C_BUFFER_TOGGLE,
+	C_CLEAR,
+	C_COLORSWAP,
+	C_SIZETOGGLE,
+	C_ERASERTOGGLE,
+	C_TOGGLE,
+	C_TOOLCYCLE,
+	C_UNDO,
+	C_REDO,
+	C_LASER,
+	C_SIZEDOWN,
+	C_ARMON,
+	C_ARMOFF,
+	C_CLOSE_ALL,
+	C_CLOSE_PROGRAM,
+	C_CLOSE_PREVIEW,
+	C_CLOSE_MULTIVIEW,
+	C_OPEN_PROJECTOR,
+	C_TOOL_PEN,
+	C_TOOL_LINE,
+	C_TOOL_ARROW,
+	C_TOOL_RECT,
+	C_TOOL_ELLIPSE,
+	C_COLOR_YELLOW,
+	C_COLOR_RED,
+	C_COLOR_GREEN,
+	C_COLOR_BLUE,
+	C_COLOR_WHITE,
+	C_COLOR_CUSTOM,
+	C_REPLAY,
+	C_REPLAYHIDE,
+	C_SIZE_THIN,
+	C_SIZE_MED,
+	C_SIZE_THICK,
+	C_TOOL_DBLARROW,
+	C_DASH,
+	C_TOOL_CURVEDARROW,
+	C_COLOR_ORANGE,
+	C_COLOR_CYAN,
+	C_FILL,
+	C_HIGHLIGHT,
+	C_OPACITY,
+	C_INDICATOR,
+	C_AUTOFADE,
+	C_TOOL_SPOTLIGHT,
+	C_TOOL_FIRSTDOWN,
+	C_TOOL_CONE,
+	C_TOOL_VERTICAL,
+	C_REPLAY_RESTART,
+	C_BUFFER_TOGGLE,
 };
 
 struct HotkeySpec {
 	const char *name;
-	const char *label;
+	const char *label; // locale KEY (data/locale/*.ini), resolved via obs_module_text at registration
 	int cmd;
 };
 
+// "name" is the persistent hotkey identifier (compat contract with the dock /
+// Stream Deck — never localize or rename it). "label" is the locale key of the
+// human-readable description.
 const HotkeySpec g_hotkeys[] = {
-	{"telestrator.clear", "Telestrator: Clear", C_CLEAR},
-	{"telestrator.colorswap", "Telestrator: Cycle Color", C_COLORSWAP},
-	{"telestrator.sizetoggle", "Telestrator: Cycle Brush Size", C_SIZETOGGLE},
-	{"telestrator.erasertoggle", "Telestrator: Toggle Eraser", C_ERASERTOGGLE},
-	{"telestrator.toggle", "Telestrator: Toggle Drawing On/Off", C_TOGGLE},
-	{"telestrator.toolcycle", "Telestrator: Cycle Tool", C_TOOLCYCLE},
-	{"telestrator.undo", "Telestrator: Undo", C_UNDO},
-	{"telestrator.redo", "Telestrator: Redo", C_REDO},
-	{"telestrator.laser", "Telestrator: Toggle Laser (temporary ink)", C_LASER},
-	{"telestrator.sizedown", "Telestrator: Brush Size Down", C_SIZEDOWN},
-	{"telestrator.armon", "Telestrator: Arm (drawing ON)", C_ARMON},
-	{"telestrator.armoff", "Telestrator: Disarm (drawing OFF)", C_ARMOFF},
-	{"telestrator.closeprojectors", "Telestrator: Close ALL projector windows", C_CLOSE_ALL},
-	{"telestrator.closeprojector.program", "Telestrator: Close Program projector", C_CLOSE_PROGRAM},
-	{"telestrator.closeprojector.preview", "Telestrator: Close Preview projector", C_CLOSE_PREVIEW},
-	{"telestrator.closeprojector.multiview", "Telestrator: Close Multiview projector", C_CLOSE_MULTIVIEW},
-	{"telestrator.openprojector", "Telestrator: Open drawing surface (windowed Program projector)", C_OPEN_PROJECTOR},
-	{"telestrator.tool.pen", "Telestrator: Tool -> Pen", C_TOOL_PEN},
-	{"telestrator.tool.line", "Telestrator: Tool -> Line", C_TOOL_LINE},
-	{"telestrator.tool.arrow", "Telestrator: Tool -> Arrow", C_TOOL_ARROW},
-	{"telestrator.tool.rect", "Telestrator: Tool -> Rectangle", C_TOOL_RECT},
-	{"telestrator.tool.ellipse", "Telestrator: Tool -> Ellipse", C_TOOL_ELLIPSE},
-	{"telestrator.color.yellow", "Telestrator: Color -> Yellow", C_COLOR_YELLOW},
-	{"telestrator.color.red", "Telestrator: Color -> Red", C_COLOR_RED},
-	{"telestrator.color.green", "Telestrator: Color -> Green", C_COLOR_GREEN},
-	{"telestrator.color.blue", "Telestrator: Color -> Blue", C_COLOR_BLUE},
-	{"telestrator.color.white", "Telestrator: Color -> White", C_COLOR_WHITE},
-	{"telestrator.color.custom", "Telestrator: Color -> Custom", C_COLOR_CUSTOM},
-	{"telestrator.buffer", "Telestrator: Start/Stop Replay Buffer", C_BUFFER_TOGGLE},
-	{"telestrator.replay", "Telestrator: Replay & Markup (save buffer, draw on it)", C_REPLAY},
-	{"telestrator.replayhide", "Telestrator: Replay - Back to Live", C_REPLAYHIDE},
-	{"telestrator.size.thin", "Telestrator: Size -> Thin", C_SIZE_THIN},
-	{"telestrator.size.med", "Telestrator: Size -> Medium", C_SIZE_MED},
-	{"telestrator.size.thick", "Telestrator: Size -> Thick", C_SIZE_THICK},
-	{"telestrator.tool.dblarrow", "Telestrator: Tool -> Double Arrow", C_TOOL_DBLARROW},
-	{"telestrator.dash", "Telestrator: Toggle Dashed Style", C_DASH},
-	{"telestrator.tool.curvedarrow", "Telestrator: Tool -> Curved Arrow", C_TOOL_CURVEDARROW},
-	{"telestrator.color.orange", "Telestrator: Color -> Orange", C_COLOR_ORANGE},
-	{"telestrator.color.cyan", "Telestrator: Color -> Cyan", C_COLOR_CYAN},
-	{"telestrator.fill", "Telestrator: Toggle Filled Shapes", C_FILL},
-	{"telestrator.highlight", "Telestrator: Toggle Highlighter (translucent)", C_HIGHLIGHT},
-	{"telestrator.opacity", "Telestrator: Cycle stroke opacity (100/66/33%)", C_OPACITY},
-	{"telestrator.indicator", "Telestrator: Toggle armed indicator dot", C_INDICATOR},
-	{"telestrator.autofade", "Telestrator: Cycle auto-fade ink (off/5s/10s)", C_AUTOFADE},
-	{"telestrator.tool.spotlight", "Telestrator: Tool -> Spotlight (dim except ellipse)", C_TOOL_SPOTLIGHT},
-	{"telestrator.tool.firstdown", "Telestrator: Tool -> Horizontal line (full-width)", C_TOOL_FIRSTDOWN},
-	{"telestrator.tool.cone", "Telestrator: Tool -> Cone (vision/passing wedge)", C_TOOL_CONE},
-	{"telestrator.tool.vertical", "Telestrator: Tool -> Vertical line (full-height)", C_TOOL_VERTICAL},
+	{"telestrator.clear", "Hotkey.Clear", C_CLEAR},
+	{"telestrator.colorswap", "Hotkey.ColorSwap", C_COLORSWAP},
+	{"telestrator.sizetoggle", "Hotkey.SizeToggle", C_SIZETOGGLE},
+	{"telestrator.erasertoggle", "Hotkey.EraserToggle", C_ERASERTOGGLE},
+	{"telestrator.toggle", "Hotkey.Toggle", C_TOGGLE},
+	{"telestrator.toolcycle", "Hotkey.ToolCycle", C_TOOLCYCLE},
+	{"telestrator.undo", "Hotkey.Undo", C_UNDO},
+	{"telestrator.redo", "Hotkey.Redo", C_REDO},
+	{"telestrator.laser", "Hotkey.Laser", C_LASER},
+	{"telestrator.sizedown", "Hotkey.SizeDown", C_SIZEDOWN},
+	{"telestrator.armon", "Hotkey.ArmOn", C_ARMON},
+	{"telestrator.armoff", "Hotkey.ArmOff", C_ARMOFF},
+	{"telestrator.closeprojectors", "Hotkey.CloseProjectors", C_CLOSE_ALL},
+	{"telestrator.closeprojector.program", "Hotkey.CloseProjector.Program", C_CLOSE_PROGRAM},
+	{"telestrator.closeprojector.preview", "Hotkey.CloseProjector.Preview", C_CLOSE_PREVIEW},
+	{"telestrator.closeprojector.multiview", "Hotkey.CloseProjector.Multiview", C_CLOSE_MULTIVIEW},
+	{"telestrator.openprojector", "Hotkey.OpenProjector", C_OPEN_PROJECTOR},
+	{"telestrator.tool.pen", "Hotkey.Tool.Pen", C_TOOL_PEN},
+	{"telestrator.tool.line", "Hotkey.Tool.Line", C_TOOL_LINE},
+	{"telestrator.tool.arrow", "Hotkey.Tool.Arrow", C_TOOL_ARROW},
+	{"telestrator.tool.rect", "Hotkey.Tool.Rect", C_TOOL_RECT},
+	{"telestrator.tool.ellipse", "Hotkey.Tool.Ellipse", C_TOOL_ELLIPSE},
+	{"telestrator.color.yellow", "Hotkey.Color.Yellow", C_COLOR_YELLOW},
+	{"telestrator.color.red", "Hotkey.Color.Red", C_COLOR_RED},
+	{"telestrator.color.green", "Hotkey.Color.Green", C_COLOR_GREEN},
+	{"telestrator.color.blue", "Hotkey.Color.Blue", C_COLOR_BLUE},
+	{"telestrator.color.white", "Hotkey.Color.White", C_COLOR_WHITE},
+	{"telestrator.color.custom", "Hotkey.Color.Custom", C_COLOR_CUSTOM},
+	{"telestrator.buffer", "Hotkey.BufferToggle", C_BUFFER_TOGGLE},
+	{"telestrator.replay", "Hotkey.Replay", C_REPLAY},
+	{"telestrator.replayhide", "Hotkey.ReplayHide", C_REPLAYHIDE},
+	{"telestrator.size.thin", "Hotkey.Size.Thin", C_SIZE_THIN},
+	{"telestrator.size.med", "Hotkey.Size.Med", C_SIZE_MED},
+	{"telestrator.size.thick", "Hotkey.Size.Thick", C_SIZE_THICK},
+	{"telestrator.tool.dblarrow", "Hotkey.Tool.DblArrow", C_TOOL_DBLARROW},
+	{"telestrator.dash", "Hotkey.Dash", C_DASH},
+	{"telestrator.tool.curvedarrow", "Hotkey.Tool.CurvedArrow", C_TOOL_CURVEDARROW},
+	{"telestrator.color.orange", "Hotkey.Color.Orange", C_COLOR_ORANGE},
+	{"telestrator.color.cyan", "Hotkey.Color.Cyan", C_COLOR_CYAN},
+	{"telestrator.fill", "Hotkey.Fill", C_FILL},
+	{"telestrator.highlight", "Hotkey.Highlight", C_HIGHLIGHT},
+	{"telestrator.opacity", "Hotkey.Opacity", C_OPACITY},
+	{"telestrator.indicator", "Hotkey.Indicator", C_INDICATOR},
+	{"telestrator.autofade", "Hotkey.AutoFade", C_AUTOFADE},
+	{"telestrator.tool.spotlight", "Hotkey.Tool.Spotlight", C_TOOL_SPOTLIGHT},
+	{"telestrator.tool.firstdown", "Hotkey.Tool.FirstDown", C_TOOL_FIRSTDOWN},
+	{"telestrator.tool.cone", "Hotkey.Tool.Cone", C_TOOL_CONE},
+	{"telestrator.tool.vertical", "Hotkey.Tool.Vertical", C_TOOL_VERTICAL},
 };
 
 // ---------------------------------------------------------------------------
@@ -1584,8 +1686,10 @@ const HotkeySpec g_hotkeys[] = {
 // the replay. Runs on the UI thread (frontend + scene edits): the dock buttons
 // are already on the UI thread; the hotkey path marshals via obs_queue_task.
 // ---------------------------------------------------------------------------
+// NOT localized on purpose: this is a persistent source NAME — it is looked up
+// with obs_get_source_by_name and saved into user scene collections, so a
+// per-locale name would break the lookup and orphan existing scene items.
 const char *REPLAY_SOURCE = "Telestrator Replay";
-bool g_proj_open = false;      // whether we opened the drawing-surface projector (toggle)
 bool g_replay_pending = false;
 
 // Raise the scene's telestrator source item to the top (ink above the replay).
@@ -1739,58 +1843,139 @@ void dispatch_cmd(int cmd)
 {
 	switch (cmd) {
 	// Flag-based (processed in video_tick on the graphics thread):
-	case C_CLEAR: f_clear = true; break;
-	case C_COLORSWAP: f_colorswap = true; break;
-	case C_SIZETOGGLE: f_sizetoggle = true; break;
-	case C_TOGGLE: f_toggle = true; break;
-	case C_TOOLCYCLE: f_toolcycle = true; break;
-	case C_UNDO: f_undo = true; break;
-	case C_REDO: f_redo = true; break;
-	case C_LASER: f_laser = true; break;
-	case C_SIZEDOWN: f_sizedown = true; break;
-	case C_ARMON: f_arm_on = true; break;
-	case C_ARMOFF: f_arm_off = true; break;
+	case C_CLEAR:
+		f_clear = true;
+		break;
+	case C_COLORSWAP:
+		f_colorswap = true;
+		break;
+	case C_SIZETOGGLE:
+		f_sizetoggle = true;
+		break;
+	case C_TOGGLE:
+		f_toggle = true;
+		break;
+	case C_TOOLCYCLE:
+		f_toolcycle = true;
+		break;
+	case C_UNDO:
+		f_undo = true;
+		break;
+	case C_REDO:
+		f_redo = true;
+		break;
+	case C_LASER:
+		f_laser = true;
+		break;
+	case C_SIZEDOWN:
+		f_sizedown = true;
+		break;
+	case C_ARMON:
+		f_arm_on = true;
+		break;
+	case C_ARMOFF:
+		f_arm_off = true;
+		break;
 	// Real OBS 32 windowed-projector titles are the DASH form ("Projector -
 	// Program/Preview/Multiview"), confirmed by live window enumeration. (The Lua
-	// engine's parens form was wrong for this OBS version.)
-	case C_CLOSE_ALL: g_pending_close_match.clear(); f_close_proj = true; break;
-	case C_CLOSE_PROGRAM: g_pending_close_match = "Projector - Program"; f_close_proj = true; break;
-	case C_CLOSE_PREVIEW: g_pending_close_match = "Projector - Preview"; f_close_proj = true; break;
-	case C_CLOSE_MULTIVIEW: g_pending_close_match = "Multiview"; f_close_proj = true; break;
+	// engine's parens form was wrong for this OBS version.) Projector open/close
+	// is pure window work: it runs on the UI thread and needs no source to exist.
+	case C_CLOSE_ALL:
+		queue_close_projectors("");
+		break;
+	case C_CLOSE_PROGRAM:
+		queue_close_projectors("Projector - Program");
+		break;
+	case C_CLOSE_PREVIEW:
+		queue_close_projectors("Projector - Preview");
+		break;
+	case C_CLOSE_MULTIVIEW:
+		queue_close_projectors("Multiview");
+		break;
 	case C_OPEN_PROJECTOR:
-		if (g_proj_open) {
-			g_pending_close_match = "Projector - Program";
-			f_close_proj = true;
-			g_proj_open = false;
-		} else {
-			obs_queue_task(
-				OBS_TASK_UI,
-				[](void *) { obs_frontend_open_projector("Program", -1, nullptr, nullptr); }, nullptr,
-				false);
-			g_proj_open = true;
-		}
+		obs_queue_task(
+			OBS_TASK_UI,
+			[](void *) {
+#ifdef _WIN32
+				// Stateless toggle: closing with the window's own X can't
+				// desync us because we check for the window itself.
+				if (projector_window_exists("Projector - Program")) {
+					close_projector_windows("Projector - Program");
+					return;
+				}
+#endif
+				obs_frontend_open_projector("Program", -1, nullptr, nullptr);
+			},
+			nullptr, false);
 		break;
 	// Direct (set immediately, like the Lua handlers). Picking a tool/color
 	// implies intent to draw, so it clears the eraser.
-	case C_ERASERTOGGLE: g_eraser = !g_eraser; break;
-	case C_TOOL_PEN: g_tool = TOOL_PEN; g_eraser = false; break;
-	case C_TOOL_LINE: g_tool = TOOL_LINE; g_eraser = false; break;
-	case C_TOOL_ARROW: g_tool = TOOL_ARROW; g_eraser = false; break;
-	case C_TOOL_RECT: g_tool = TOOL_RECT; g_eraser = false; break;
-	case C_TOOL_ELLIPSE: g_tool = TOOL_ELLIPSE; g_eraser = false; break;
-	case C_COLOR_YELLOW: g_color_index = 1; g_eraser = false; break;
-	case C_COLOR_RED: g_color_index = 2; g_eraser = false; break;
-	case C_COLOR_GREEN: g_color_index = 3; g_eraser = false; break;
-	case C_COLOR_BLUE: g_color_index = 4; g_eraser = false; break;
-	case C_COLOR_WHITE: g_color_index = 5; g_eraser = false; break;
-	case C_COLOR_ORANGE: g_color_index = 6; g_eraser = false; break;
-	case C_COLOR_CYAN: g_color_index = 7; g_eraser = false; break;
-	case C_COLOR_CUSTOM: g_color_index = 8; g_eraser = false; break;
+	case C_ERASERTOGGLE:
+		g_eraser = !g_eraser;
+		break;
+	case C_TOOL_PEN:
+		g_tool = TOOL_PEN;
+		g_eraser = false;
+		break;
+	case C_TOOL_LINE:
+		g_tool = TOOL_LINE;
+		g_eraser = false;
+		break;
+	case C_TOOL_ARROW:
+		g_tool = TOOL_ARROW;
+		g_eraser = false;
+		break;
+	case C_TOOL_RECT:
+		g_tool = TOOL_RECT;
+		g_eraser = false;
+		break;
+	case C_TOOL_ELLIPSE:
+		g_tool = TOOL_ELLIPSE;
+		g_eraser = false;
+		break;
+	case C_COLOR_YELLOW:
+		g_color_index = 1;
+		g_eraser = false;
+		break;
+	case C_COLOR_RED:
+		g_color_index = 2;
+		g_eraser = false;
+		break;
+	case C_COLOR_GREEN:
+		g_color_index = 3;
+		g_eraser = false;
+		break;
+	case C_COLOR_BLUE:
+		g_color_index = 4;
+		g_eraser = false;
+		break;
+	case C_COLOR_WHITE:
+		g_color_index = 5;
+		g_eraser = false;
+		break;
+	case C_COLOR_ORANGE:
+		g_color_index = 6;
+		g_eraser = false;
+		break;
+	case C_COLOR_CYAN:
+		g_color_index = 7;
+		g_eraser = false;
+		break;
+	case C_COLOR_CUSTOM:
+		g_color_index = 8;
+		g_eraser = false;
+		break;
 	// Replay touches frontend + scene APIs -> run on the UI thread. (Safe from
 	// the dock too, which is already on the UI thread.)
-	case C_REPLAY: obs_queue_task(OBS_TASK_UI, [](void *) { do_replay_markup(); }, nullptr, false); break;
-	case C_REPLAYHIDE: obs_queue_task(OBS_TASK_UI, [](void *) { do_replay_hide(); }, nullptr, false); break;
-	case C_REPLAY_RESTART: obs_queue_task(OBS_TASK_UI, [](void *) { do_replay_restart(); }, nullptr, false); break;
+	case C_REPLAY:
+		obs_queue_task(OBS_TASK_UI, [](void *) { do_replay_markup(); }, nullptr, false);
+		break;
+	case C_REPLAYHIDE:
+		obs_queue_task(OBS_TASK_UI, [](void *) { do_replay_hide(); }, nullptr, false);
+		break;
+	case C_REPLAY_RESTART:
+		obs_queue_task(OBS_TASK_UI, [](void *) { do_replay_restart(); }, nullptr, false);
+		break;
 	case C_BUFFER_TOGGLE:
 		obs_queue_task(
 			OBS_TASK_UI,
@@ -1802,22 +1987,59 @@ void dispatch_cmd(int cmd)
 			},
 			nullptr, false);
 		break;
-	case C_SIZE_THIN: g_size = 2; break;
-	case C_SIZE_MED: g_size = 6; break;
-	case C_SIZE_THICK: g_size = 12; break;
-	case C_TOOL_DBLARROW: g_tool = TOOL_DBLARROW; g_eraser = false; break;
-	case C_TOOL_CURVEDARROW: g_tool = TOOL_CURVEDARROW; g_eraser = false; break;
-	case C_DASH: g_dashed = !g_dashed; break;
-	case C_FILL: g_filled = !g_filled; break;
-	case C_HIGHLIGHT: g_highlighter = !g_highlighter; break;
-	case C_OPACITY: g_opacity = (g_opacity > 0.8f) ? 0.66f : (g_opacity > 0.5f ? 0.33f : 1.0f); break;
-	case C_INDICATOR: g_show_indicator = !g_show_indicator; break;
-	case C_AUTOFADE: g_autofade_secs = (g_autofade_secs == 0) ? 5 : (g_autofade_secs == 5 ? 10 : 0); break;
-	case C_TOOL_SPOTLIGHT: g_tool = TOOL_SPOTLIGHT; g_eraser = false; break;
-	case C_TOOL_FIRSTDOWN: g_tool = TOOL_FIRSTDOWN; g_eraser = false; break;
-	case C_TOOL_CONE: g_tool = TOOL_CONE; g_eraser = false; break;
-	case C_TOOL_VERTICAL: g_tool = TOOL_VERTICAL; g_eraser = false; break;
-	default: break;
+	case C_SIZE_THIN:
+		g_size = 2;
+		break;
+	case C_SIZE_MED:
+		g_size = 6;
+		break;
+	case C_SIZE_THICK:
+		g_size = 12;
+		break;
+	case C_TOOL_DBLARROW:
+		g_tool = TOOL_DBLARROW;
+		g_eraser = false;
+		break;
+	case C_TOOL_CURVEDARROW:
+		g_tool = TOOL_CURVEDARROW;
+		g_eraser = false;
+		break;
+	case C_DASH:
+		g_dashed = !g_dashed;
+		break;
+	case C_FILL:
+		g_filled = !g_filled;
+		break;
+	case C_HIGHLIGHT:
+		g_highlighter = !g_highlighter;
+		break;
+	case C_OPACITY:
+		g_opacity = (g_opacity > 0.8f) ? 0.66f : (g_opacity > 0.5f ? 0.33f : 1.0f);
+		break;
+	case C_INDICATOR:
+		g_show_indicator = !g_show_indicator;
+		break;
+	case C_AUTOFADE:
+		g_autofade_secs = (g_autofade_secs == 0) ? 5 : (g_autofade_secs == 5 ? 10 : 0);
+		break;
+	case C_TOOL_SPOTLIGHT:
+		g_tool = TOOL_SPOTLIGHT;
+		g_eraser = false;
+		break;
+	case C_TOOL_FIRSTDOWN:
+		g_tool = TOOL_FIRSTDOWN;
+		g_eraser = false;
+		break;
+	case C_TOOL_CONE:
+		g_tool = TOOL_CONE;
+		g_eraser = false;
+		break;
+	case C_TOOL_VERTICAL:
+		g_tool = TOOL_VERTICAL;
+		g_eraser = false;
+		break;
+	default:
+		break;
 	}
 }
 
@@ -1870,11 +2092,22 @@ static void ws_set_color(obs_data_t *req, obs_data_t *resp, void *)
 // demo / integration hook (works with drawing armed, no window focus needed).
 static void ws_sim_stroke(obs_data_t *req, obs_data_t *resp, void *)
 {
+	// Hard caps: this is remote-controllable over obs-websocket, so bound the
+	// work a single request (or a flood of them) can queue.
+	constexpr long long MAX_MS = 30000;
+	constexpr size_t MAX_POINTS = 4096;
+	constexpr size_t MAX_QUEUE = 32;
 	SimStroke ss;
 	long long ms = obs_data_get_int(req, "duration_ms");
-	ss.duration = (ms > 0 ? (float)ms : 400.0f) / 1000.0f;
+	if (ms <= 0)
+		ms = 400;
+	if (ms > MAX_MS)
+		ms = MAX_MS;
+	ss.duration = (float)ms / 1000.0f;
 	obs_data_array_t *arr = obs_data_get_array(req, "points");
 	size_t n = arr ? obs_data_array_count(arr) : 0;
+	if (n > MAX_POINTS)
+		n = MAX_POINTS;
 	for (size_t i = 0; i < n; i++) {
 		obs_data_t *p = obs_data_array_item(arr, i);
 		ss.pts.push_back({(float)obs_data_get_double(p, "x"), (float)obs_data_get_double(p, "y")});
@@ -1885,7 +2118,10 @@ static void ws_sim_stroke(obs_data_t *req, obs_data_t *resp, void *)
 	bool ok = !ss.pts.empty();
 	if (ok) {
 		std::lock_guard<std::mutex> lk(g_sim_mtx);
-		g_sim_queue.push_back(std::move(ss));
+		if (g_sim_queue.size() >= MAX_QUEUE)
+			ok = false;
+		else
+			g_sim_queue.push_back(std::move(ss));
 	}
 	if (resp)
 		obs_data_set_bool(resp, "ok", ok);
@@ -1928,7 +2164,7 @@ obs_source_t *get_or_create_telestrator()
 		},
 		&found);
 	if (!found)
-		found = obs_source_create("telestrator", "Telestrator", nullptr, nullptr);
+		found = obs_source_create("telestrator", obs_module_text("SourceName"), nullptr, nullptr);
 	return found;
 }
 
@@ -1976,7 +2212,7 @@ static void show_settings_dialog()
 {
 	QWidget *parent = static_cast<QWidget *>(obs_frontend_get_main_window());
 	QDialog *dlg = new QDialog(parent);
-	dlg->setWindowTitle("Telestrator Settings");
+	dlg->setWindowTitle(obs_module_text("Settings.Title"));
 	dlg->setAttribute(Qt::WA_DeleteOnClose);
 	QFormLayout *form = new QFormLayout(dlg);
 
@@ -1985,37 +2221,31 @@ static void show_settings_dialog()
 	fade->setValue(g_autofade_secs);
 	fade->setSuffix(" s");
 	QObject::connect(fade, QOverload<int>::of(&QSpinBox::valueChanged), [](int v) { g_autofade_secs = v; });
-	form->addRow("Auto-fade ink after (0 = off):", fade);
+	form->addRow(obs_module_text("Settings.AutoFade"), fade);
 
 	QCheckBox *ind = new QCheckBox(dlg);
 	ind->setChecked(g_show_indicator);
 	QObject::connect(ind, &QCheckBox::toggled, [](bool v) { g_show_indicator = v; });
-	form->addRow("Show armed indicator dot:", ind);
+	form->addRow(obs_module_text("Settings.Indicator"), ind);
 
 	QSpinBox *op = new QSpinBox(dlg);
 	op->setRange(10, 100);
 	op->setValue((int)(g_opacity * 100.0f + 0.5f));
 	op->setSuffix(" %");
 	QObject::connect(op, QOverload<int>::of(&QSpinBox::valueChanged), [](int v) { g_opacity = (float)v / 100.0f; });
-	form->addRow("Default ink opacity:", op);
+	form->addRow(obs_module_text("Settings.Opacity"), op);
 
 	QCheckBox *legacy = new QCheckBox(dlg);
 	legacy->setChecked(g_legacy_cursor_input.load());
-	legacy->setToolTip("Legacy/experimental. The Telestrator Draw dock is the native way to draw. "
-			   "This enables drawing on a windowed projector or the OBS main preview via global "
-			   "Windows cursor polling + window-title matching (Windows-only, must keep the "
-			   "projector/preview focused, and Lock Preview on for preview mode).");
+	legacy->setToolTip(obs_module_text("Settings.LegacyInput.Tip"));
 	QObject::connect(legacy, &QCheckBox::toggled, [](bool v) { g_legacy_cursor_input.store(v); });
-	form->addRow("Legacy projector / preview input (Win32):", legacy);
+	form->addRow(obs_module_text("Settings.LegacyInput"), legacy);
 
-	QLabel *replayHelp = new QLabel("Replay markup needs the OBS Replay Buffer ON: "
-					"Settings -> Output -> Replay Buffer, then "
-					"Controls -> Start Replay Buffer.",
-					dlg);
+	QLabel *replayHelp = new QLabel(obs_module_text("Settings.ReplayHelp"), dlg);
 	replayHelp->setWordWrap(true);
-	form->addRow("Replay:", replayHelp);
+	form->addRow(obs_module_text("Settings.Replay"), replayHelp);
 
-	QLabel *about = new QLabel("Telestrator for OBS Studio — MIT licensed.", dlg);
+	QLabel *about = new QLabel(obs_module_text("Settings.About"), dlg);
 	about->setWordWrap(true);
 	form->addRow(about);
 
@@ -2105,8 +2335,8 @@ protected:
 	void contextMenuEvent(QContextMenuEvent *e) override
 	{
 		QMenu menu(this);
-		QAction *fit = menu.addAction("Fit to Window");
-		QAction *fill = menu.addAction("Fill Window (crop)");
+		QAction *fit = menu.addAction(obs_module_text("Menu.FitToWindow"));
+		QAction *fill = menu.addAction(obs_module_text("Menu.FillWindow"));
 		fit->setCheckable(true);
 		fill->setCheckable(true);
 		fit->setChecked(!g_drawpad_fill.load());
@@ -2273,14 +2503,14 @@ void add_dock()
 
 	// 1. Put the overlay on (or take it off) the current scene. Label flips from
 	//    the sync timer below.
-	QPushButton *sceneBtn = ctrlBtn("Add to Current Scene", -1);
-	sceneBtn->setToolTip("Add or remove the Telestrator overlay on the current scene");
+	QPushButton *sceneBtn = ctrlBtn(obs_module_text("Btn.AddToScene"), -1);
+	sceneBtn->setToolTip(obs_module_text("Btn.AddToScene.Tip"));
 	QObject::connect(sceneBtn, &QPushButton::clicked, []() { toggle_telestrator_in_scene(); });
 	rv->addWidget(sceneBtn);
 
 	// 2. Arm drawing: the Start/Stop slot; the label flips like OBS's buttons.
-	QPushButton *armBtn = ctrlBtn("Arm Drawing", C_TOGGLE);
-	armBtn->setToolTip("Toggle drawing on/off (telestrator.toggle)");
+	QPushButton *armBtn = ctrlBtn(obs_module_text("Btn.ArmOn"), C_TOGGLE);
+	armBtn->setToolTip(obs_module_text("Btn.Arm.Tip"));
 	rv->addWidget(armBtn);
 
 	// ---- Tool palette: 4-wide grid, ordered by reach frequency; eraser lives
@@ -2289,27 +2519,27 @@ void add_dock()
 	tg->setContentsMargins(0, 0, 0, 0);
 	tg->setSpacing(2);
 	struct ToolDef {
-		const char *icon, *tip;
+		const char *icon, *tip; // tip = locale key (Tool.*.Tip)
 		int cmd, tool;
 	};
 	static const ToolDef TOOL_DEFS[] = {
-		{"pen", "Pen", C_TOOL_PEN, TOOL_PEN},
-		{"line", "Line", C_TOOL_LINE, TOOL_LINE},
-		{"arrow", "Arrow", C_TOOL_ARROW, TOOL_ARROW},
-		{"dblarrow", "Double arrow", C_TOOL_DBLARROW, TOOL_DBLARROW},
-		{"curvedarrow", "Curved arrow", C_TOOL_CURVEDARROW, TOOL_CURVEDARROW},
-		{"rect", "Rectangle", C_TOOL_RECT, TOOL_RECT},
-		{"ellipse", "Ellipse", C_TOOL_ELLIPSE, TOOL_ELLIPSE},
-		{"cone", "Cone (vision wedge)", C_TOOL_CONE, TOOL_CONE},
-		{"firstdown", "Horizontal line (full width)", C_TOOL_FIRSTDOWN, TOOL_FIRSTDOWN},
-		{"vertical", "Vertical line (full height)", C_TOOL_VERTICAL, TOOL_VERTICAL},
-		{"spotlight", "Spotlight", C_TOOL_SPOTLIGHT, TOOL_SPOTLIGHT},
-		{"eraser", "Eraser", C_ERASERTOGGLE, -1},
+		{"pen", "Tool.Pen.Tip", C_TOOL_PEN, TOOL_PEN},
+		{"line", "Tool.Line.Tip", C_TOOL_LINE, TOOL_LINE},
+		{"arrow", "Tool.Arrow.Tip", C_TOOL_ARROW, TOOL_ARROW},
+		{"dblarrow", "Tool.DblArrow.Tip", C_TOOL_DBLARROW, TOOL_DBLARROW},
+		{"curvedarrow", "Tool.CurvedArrow.Tip", C_TOOL_CURVEDARROW, TOOL_CURVEDARROW},
+		{"rect", "Tool.Rect.Tip", C_TOOL_RECT, TOOL_RECT},
+		{"ellipse", "Tool.Ellipse.Tip", C_TOOL_ELLIPSE, TOOL_ELLIPSE},
+		{"cone", "Tool.Cone.Tip", C_TOOL_CONE, TOOL_CONE},
+		{"firstdown", "Tool.FirstDown.Tip", C_TOOL_FIRSTDOWN, TOOL_FIRSTDOWN},
+		{"vertical", "Tool.Vertical.Tip", C_TOOL_VERTICAL, TOOL_VERTICAL},
+		{"spotlight", "Tool.Spotlight.Tip", C_TOOL_SPOTLIGHT, TOOL_SPOTLIGHT},
+		{"eraser", "Tool.Eraser.Tip", C_ERASERTOGGLE, -1},
 	};
 	const int TOOL_COLS = 4;
 	int ti = 0;
 	for (const ToolDef &d : TOOL_DEFS) {
-		tg->addWidget(toolBtn(d.icon, d.tip, d.cmd, d.tool), ti / TOOL_COLS, ti % TOOL_COLS);
+		tg->addWidget(toolBtn(d.icon, obs_module_text(d.tip), d.cmd, d.tool), ti / TOOL_COLS, ti % TOOL_COLS);
 		ti++;
 	}
 	for (int c = 0; c < TOOL_COLS; c++)
@@ -2320,10 +2550,10 @@ void add_dock()
 	QGridLayout *stg = new QGridLayout();
 	stg->setContentsMargins(0, 0, 0, 0);
 	stg->setSpacing(2);
-	QToolButton *dashBtn = iconBtn("dash", "Dashed style", C_DASH);
-	QToolButton *fillBtn = iconBtn("fill", "Filled shapes", C_FILL);
-	QToolButton *hlBtn = iconBtn("highlighter", "Highlighter (translucent ink)", C_HIGHLIGHT);
-	QToolButton *laserBtn = iconBtn("laser", "Laser (fading ink)", C_LASER);
+	QToolButton *dashBtn = iconBtn("dash", obs_module_text("Style.Dash.Tip"), C_DASH);
+	QToolButton *fillBtn = iconBtn("fill", obs_module_text("Style.Fill.Tip"), C_FILL);
+	QToolButton *hlBtn = iconBtn("highlighter", obs_module_text("Style.Highlight.Tip"), C_HIGHLIGHT);
+	QToolButton *laserBtn = iconBtn("laser", obs_module_text("Style.Laser.Tip"), C_LASER);
 	stg->addWidget(dashBtn, 0, 0);
 	stg->addWidget(fillBtn, 0, 1);
 	stg->addWidget(hlBtn, 0, 2);
@@ -2343,7 +2573,7 @@ void add_dock()
 	QSlider *szSlider = new QSlider(Qt::Horizontal);
 	szSlider->setRange(2, BRUSH_MAX);
 	szSlider->setValue(g_size);
-	szSlider->setToolTip("Brush size");
+	szSlider->setToolTip(obs_module_text("Slider.BrushSize.Tip"));
 	szSlider->setFocusPolicy(Qt::NoFocus);
 	QObject::connect(szSlider, &QSlider::valueChanged, [](int val) { g_size = val; });
 	szRow->addWidget(szSmall, 0);
@@ -2358,7 +2588,7 @@ void add_dock()
 	DrawSurface *drawSurface = new DrawSurface();
 	// Fresh dock id so OBS places it at the bottom (a drawing pad below the frame)
 	// instead of restoring an old tabbed-with-Tools layout.
-	obs_frontend_add_dock_by_id("telestrator_dock_drawpad", "Telestrator Draw", drawSurface);
+	obs_frontend_add_dock_by_id("telestrator_dock_drawpad", obs_module_text("Dock.Draw"), drawSurface);
 	if (QMainWindow *mw = static_cast<QMainWindow *>(obs_frontend_get_main_window())) {
 		if (QDockWidget *dw = mw->findChild<QDockWidget *>("telestrator_dock_drawpad")) {
 			dw->setFloating(false);
@@ -2435,12 +2665,13 @@ void add_dock()
 	swCenter->addStretch(1);
 	cv->addLayout(swCenter);
 
-	QPushButton *wheel = new QPushButton("Select Color…");
+	QPushButton *wheel = new QPushButton(obs_module_text("Btn.SelectColor"));
 	wheel->setMinimumHeight(28);
 	wheel->setFocusPolicy(Qt::NoFocus);
-	wheel->setToolTip("Pick any ink color");
+	wheel->setToolTip(obs_module_text("Btn.SelectColor.Tip"));
 	QObject::connect(wheel, &QPushButton::clicked, []() {
-		QColor c = QColorDialog::getColor(QColor(255, 255, 255), nullptr, "Select Color");
+		QColor c = QColorDialog::getColor(QColor(255, 255, 255), nullptr,
+						  obs_module_text("Dialog.SelectColor.Title"));
 		if (c.isValid())
 			set_custom_color(0xFF000000u | ((uint32_t)c.blue() << 16) | ((uint32_t)c.green() << 8) |
 					 (uint32_t)c.red());
@@ -2451,29 +2682,29 @@ void add_dock()
 	// ---- Edit (Tools dock): undo / redo side by side, clear under them ----
 	QHBoxLayout *editRow = new QHBoxLayout();
 	editRow->setSpacing(6);
-	editRow->addWidget(ctrlBtn("Undo", C_UNDO), 1);
-	editRow->addWidget(ctrlBtn("Redo", C_REDO), 1);
+	editRow->addWidget(ctrlBtn(obs_module_text("Btn.Undo"), C_UNDO), 1);
+	editRow->addWidget(ctrlBtn(obs_module_text("Btn.Redo"), C_REDO), 1);
 	tv->addLayout(editRow);
-	tv->addWidget(ctrlBtn("Clear", C_CLEAR));
+	tv->addWidget(ctrlBtn(obs_module_text("Btn.Clear"), C_CLEAR));
 	tv->addStretch(1);
 
 	// ---- Replay dock: markup flow + the Settings gear beside "Resume Live"
 	//      (exactly like OBS's Virtual Camera gear) ----
-	rv->addWidget(ctrlBtn("Markup Replay", C_REPLAY));
-	rv->addWidget(ctrlBtn("Replay Again", C_REPLAY_RESTART));
+	rv->addWidget(ctrlBtn(obs_module_text("Btn.MarkupReplay"), C_REPLAY));
+	rv->addWidget(ctrlBtn(obs_module_text("Btn.ReplayAgain"), C_REPLAY_RESTART));
 	// Resume Live stays full-width so its label centers exactly like the other
 	// buttons; the settings gear floats flat over the right end (no stolen width,
 	// so nothing shifts off-center). Same grid cell => the gear stacks on top.
 	QGridLayout *gearRow = new QGridLayout();
 	gearRow->setContentsMargins(0, 0, 0, 0);
 	gearRow->setSpacing(0);
-	gearRow->addWidget(ctrlBtn("Resume Live", C_REPLAYHIDE), 0, 0);
+	gearRow->addWidget(ctrlBtn(obs_module_text("Btn.ResumeLive"), C_REPLAYHIDE), 0, 0);
 	QToolButton *gear = new QToolButton();
 	gear->setAutoRaise(true); // flat until hover, so the button shows through
 	gear->setIcon(dock_icon("settings"));
 	gear->setIconSize(QSize(16, 16));
 	gear->setFixedSize(30, 26);
-	gear->setToolTip("Telestrator settings");
+	gear->setToolTip(obs_module_text("Btn.Settings.Tip"));
 	gear->setFocusPolicy(Qt::NoFocus);
 	QObject::connect(gear, &QToolButton::clicked, []() { show_settings_dialog(); });
 	gearRow->addWidget(gear, 0, 0, Qt::AlignRight | Qt::AlignVCenter);
@@ -2486,10 +2717,11 @@ void add_dock()
 	auto *lastSwatch = new int(-1);
 	QTimer *sync = new QTimer(tools);
 	QObject::connect(sync, &QTimer::timeout, [=]() {
-		armBtn->setText(g_drawing_enabled ? "Disarm Drawing" : "Arm Drawing");
-		sceneBtn->setText(telestrator_in_current_scene() ? "Remove from Scene" : "Add to Current Scene");
+		armBtn->setText(obs_module_text(g_drawing_enabled ? "Btn.ArmOff" : "Btn.ArmOn"));
+		sceneBtn->setText(
+			obs_module_text(telestrator_in_current_scene() ? "Btn.RemoveFromScene" : "Btn.AddToScene"));
 		for (const ToolRef &r : *toolRefs) {
-			bool want = (r.tool == -1) ? g_eraser : (!g_eraser && g_tool == r.tool);
+			bool want = (r.tool == -1) ? g_eraser.load() : (!g_eraser && g_tool == r.tool);
 			if (r.btn->isChecked() != want)
 				r.btn->setChecked(want);
 		}
@@ -2515,7 +2747,8 @@ void add_dock()
 				(*swatches)[*lastSwatch].first->setStyleSheet(
 					swatchCss(QColorDialog::standardColor(*lastSwatch), false));
 			if (sel >= 0)
-				(*swatches)[sel].first->setStyleSheet(swatchCss(QColorDialog::standardColor(sel), true));
+				(*swatches)[sel].first->setStyleSheet(
+					swatchCss(QColorDialog::standardColor(sel), true));
 			*lastSwatch = sel;
 		}
 	});
@@ -2533,9 +2766,9 @@ void add_dock()
 		s->setMinimumWidth(290);
 		return s;
 	};
-	obs_frontend_add_dock_by_id("telestrator_dock_tools", "Telestrator Tools", wrapScroll(tools));
-	obs_frontend_add_dock_by_id("telestrator_dock_color", "Telestrator Color", wrapScroll(colors));
-	obs_frontend_add_dock_by_id("telestrator_dock_replay", "Telestrator Replay", wrapScroll(replay));
+	obs_frontend_add_dock_by_id("telestrator_dock_tools", obs_module_text("Dock.Tools"), wrapScroll(tools));
+	obs_frontend_add_dock_by_id("telestrator_dock_color", obs_module_text("Dock.Color"), wrapScroll(colors));
+	obs_frontend_add_dock_by_id("telestrator_dock_replay", obs_module_text("Dock.Replay"), wrapScroll(replay));
 
 	// Initial placement: stacked on the right, top -> bottom (NOT tabbed), so
 	// the column reads Tools / Color / Replay. place_docks_once re-asserts this
@@ -2657,7 +2890,8 @@ bool obs_module_load(void)
 	obs_register_source(&telestrator_source_info);
 
 	for (const auto &hk : g_hotkeys)
-		obs_hotkey_register_frontend(hk.name, hk.label, tel_hotkey_cb, (void *)(intptr_t)hk.cmd);
+		obs_hotkey_register_frontend(hk.name, obs_module_text(hk.label), tel_hotkey_cb,
+					     (void *)(intptr_t)hk.cmd);
 
 	obs_log(LOG_INFO, "telestrator plugin loaded successfully (version %s)", PLUGIN_VERSION);
 	return true;
@@ -2682,8 +2916,12 @@ extern "C" void obs_module_post_load(void)
 
 void obs_module_unload(void)
 {
-	// Drop the frontend callbacks so a late event can't call into this
-	// now-unloaded module (dangling function pointer).
+	// Drop the websocket vendor handlers and frontend callbacks so a late
+	// request/event can't call into this now-unloaded module.
+	if (g_vendor) {
+		obs_websocket_vendor_unregister_request(g_vendor, "set_color");
+		obs_websocket_vendor_unregister_request(g_vendor, "sim_stroke");
+	}
 	obs_frontend_remove_event_callback(tel_replay_event, nullptr);
 	obs_frontend_remove_event_callback(tel_frontend_event, nullptr);
 

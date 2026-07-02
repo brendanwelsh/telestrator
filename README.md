@@ -1,23 +1,27 @@
-<div align="center">
+<p align="center">
+  <img src="assets/chum-logo.png" width="104" alt="chumthewaters" />
+</p>
 
-<img src="assets/chum-logo.png" width="104" alt="chumthewaters" />
+<h1 align="center">OBS Telestrator</h1>
 
-# OBS Telestrator
+<p align="center">
+  <strong>Draw on your live output in <a href="https://obsproject.com">OBS Studio</a>,<br>
+  and mark up instant replays without leaving your scene.</strong>
+</p>
 
-**Draw on your live output in [OBS Studio](https://obsproject.com), and mark up
-instant replays without leaving your scene.**
+<p align="center">
+  <a href="#install">Install</a> •
+  <a href="#quick-start">Quick start</a> •
+  <a href="#tools">Tools</a> •
+  <a href="#replay-markup">Replay markup</a> •
+  <a href="#the-docks">Docks</a> •
+  <a href="#hotkeys-and-controllers">Hotkeys &amp; controllers</a> •
+  <a href="#build-from-source">Build</a>
+</p>
 
-[![Latest release](https://img.shields.io/github/v/release/brendanwelsh/obs-telestrator)](https://github.com/brendanwelsh/obs-telestrator/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/brendanwelsh/obs-telestrator/total)](https://github.com/brendanwelsh/obs-telestrator/releases)
-[![License: MIT](https://img.shields.io/github/license/brendanwelsh/obs-telestrator)](LICENSE)
-
-Requires **OBS Studio 31+** · Windows (macOS and Linux compile but are untested)
-
-</div>
-
-![OBS Telestrator demo](demo/demo.gif)
-
-**[Install](#install-windows-obs-31) · [Quick start](#quick-start) · [Tools](#tools) · [Replay markup](#replay-markup) · [Docks](#the-docks) · [Hotkeys & controllers](#hotkeys-and-controllers) · [Build](#build-from-source)**
+<p align="center">
+  <img src="demo/demo.gif" width="720" alt="OBS Telestrator demo" />
+</p>
 
 ## What it is
 
@@ -27,16 +31,17 @@ play, cone the vision, then clear it and call the next one. Ink composites into
 your program feed in real time, so your stream and recording see exactly what
 you draw.
 
-## Install (Windows, OBS 31+)
+## Install
 
 1. Download `telestrator-x.y.z-windows-x64.zip` from
-   [Releases](https://github.com/brendanwelsh/obs-telestrator/releases).
-2. Close OBS and copy `telestrator.dll` into
-   `C:\Program Files\obs-studio\obs-plugins\64bit\`.
+   [Releases](https://github.com/brendanwelsh/obs-telestrator/releases)
+   (needs OBS Studio 31 or newer).
+2. Close OBS and extract the zip into `C:\Program Files\obs-studio\` —
+   it merges into the existing `obs-plugins` and `data` folders.
 3. Start OBS. The **Telestrator** docks and the **Draw** pad appear
    automatically.
 
-Or [build from source](#build-from-source).
+On macOS or Linux, [build from source](#build-from-source).
 
 ## Quick start
 
@@ -101,7 +106,9 @@ obs-websocket, so a dock click, a hotkey, and a key press are interchangeable. A
 dedicated **Ulanzi-dial plugin** is [planned](docs/ROADMAP.md). The full command
 list is in [`docs/STREAMDECK-SPEC.md`](docs/STREAMDECK-SPEC.md).
 
-![Telestrator Stream Deck page](docs/streamdeck.png)
+<p align="center">
+  <img src="docs/streamdeck.png" width="720" alt="Telestrator Stream Deck page" />
+</p>
 
 ## Settings
 
@@ -138,4 +145,5 @@ path is pure Qt, so porting help is welcome.
 [obs-whiteboard-lua](https://github.com/katarai/obs-whiteboard-lua). Brendan
 built the telestrator on that (obs-telestrator-lua), and this is the native
 C++/libobs port. The attribution rides along in [`LICENSE`](LICENSE) and the
-source headers. MIT licensed.
+source headers. MIT licensed; bundled GPLv2 components are listed in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
