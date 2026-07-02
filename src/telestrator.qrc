@@ -1,0 +1,29 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource prefix="/telestrator">
+  <file alias="pen.png">../icons/pen-72.png</file>
+  <file alias="line.png">../icons/line-72.png</file>
+  <file alias="arrow.png">../icons/arrow-72.png</file>
+  <file alias="dblarrow.png">../icons/dblarrow-72.png</file>
+  <file alias="curvedarrow.png">../icons/curvedarrow-72.png</file>
+  <file alias="rect.png">../icons/rect-72.png</file>
+  <file alias="ellipse.png">../icons/ellipse-72.png</file>
+  <file alias="spotlight.png">../icons/spotlight-72.png</file>
+  <file alias="firstdown.png">../icons/firstdown-72.png</file>
+  <file alias="vertical.png">../icons/vertical-72.png</file>
+  <file alias="cone.png">../icons/cone-72.png</file>
+  <file alias="eraser.png">../icons/eraser-72.png</file>
+  <file alias="laser.png">../icons/laser-72.png</file>
+  <file alias="undo.png">../icons/undo-72.png</file>
+  <file alias="redo.png">../icons/redo-72.png</file>
+  <file alias="clear.png">../icons/clear-72.png</file>
+  <file alias="dash.png">../icons/dash-72.png</file>
+  <file alias="fill.png">../icons/fill-72.png</file>
+  <file alias="highlighter.png">../icons/highlighter-72.png</file>
+  <file alias="replay.png">../icons/replay-72.png</file>
+  <file alias="replayhide.png">../icons/replayhide-72.png</file>
+  <file alias="arm.png">../icons/arm-72.png</file>
+  <file alias="sizeup.png">../icons/sizeup-72.png</file>
+  <file alias="sizedown.png">../icons/sizedown-72.png</file>
+  <file alias="settings.png">../icons/settings-72.png</file>
+</qresource>
+</RCC>

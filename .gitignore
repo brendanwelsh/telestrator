@@ -1,0 +1,52 @@
+# Build output
+build/
+build_*/
+out/
+cmake-build-*/
+install/
+release/
+
+# Dependency cache (libobs / Qt fetched by buildspec.json)
+.deps/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+cmake_install.cmake
+*.cmake.stamp
+
+# Compiled artifacts
+*.o
+*.obj
+*.lib
+*.a
+*.dll
+*.dylib
+*.so
+*.exp
+*.ilk
+*.pdb
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.user
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local-only notes (may contain real obs-websocket credentials — never publish)
+SETUP-LOCAL.md
+
+# Local dev captures (screenshots / recordings; curated ones live in demo/)
+/*.png
+/*.gif
+/*.mp4
+/*.webm
+
+# Icon generator intermediates (masters downscaled to -72; regenerable)
+icons/*-144.png
