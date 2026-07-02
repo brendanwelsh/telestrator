@@ -208,10 +208,13 @@ float g_sim_t = -1.0f; // <0 == idle
 // default. When off, none of the polling / title-matching / preview-rect code runs.
 std::atomic<bool> g_legacy_cursor_input{false};
 
+#ifdef _WIN32
 // "Preview mode" rect (legacy only): the OBS main preview widget's physical screen
-// rect, refreshed on the UI thread while g_legacy_cursor_input is on.
+// rect, refreshed on the UI thread while g_legacy_cursor_input is on. The whole
+// legacy path is Win32-only, so none of this exists on other platforms.
 std::atomic<bool> g_prev_valid{false};
 std::atomic<float> g_prev_l{0.0f}, g_prev_t{0.0f}, g_prev_w{0.0f}, g_prev_h{0.0f};
+#endif
 
 std::vector<Stroke> g_strokes;    // committed permanent strokes
 std::vector<Stroke> g_redo;       // redo stack
@@ -1268,12 +1271,14 @@ void feed_draw(TelSource *d, float mx, float my, bool down)
 	d->mouse_y = my;
 }
 
+#ifdef _WIN32
 // OBS's MAIN PREVIEW insets the canvas by a fixed border before letterboxing it
 // into the widget (PREVIEW_EDGE_SIZE, in *physical* px — GetPixelSize multiplies
 // the widget size by devicePixelRatioF, then subtracts the raw edge). Windowed
 // projectors fill edge to edge (edge 0). Match OBS exactly so ink lands precisely
 // under the cursor at the corners, not drifted inward by the border.
 static constexpr float PREVIEW_EDGE_SIZE = 10.0f; // == OBS UI PREVIEW_EDGE_SIZE
+#endif
 
 // Map a client-area-local point (area pixel w/h, minus any letterbox edge inset)
 // to canvas coords and feed it. This mirrors OBS's own GetScaleAndCenterPos +
@@ -2598,10 +2603,12 @@ void add_dock()
 		}
 	}
 
+#ifdef _WIN32
 	// LEGACY "preview mode": publish the OBS main-preview screen rect to handle_input
 	// on a UI-thread timer. This reaches into OBS's private widget tree, so it ONLY
 	// runs when the legacy cursor-input path is opted in (default off) — otherwise the
-	// timer is inert and never touches OBS internals.
+	// timer is inert and never touches OBS internals. Win32-only, like the whole
+	// legacy input path.
 	if (QMainWindow *mw = static_cast<QMainWindow *>(obs_frontend_get_main_window())) {
 		QTimer *prevTimer = new QTimer(mw);
 		QObject::connect(prevTimer, &QTimer::timeout, [mw]() {
@@ -2611,7 +2618,6 @@ void add_dock()
 			}
 			QWidget *pv = mw->findChild<QWidget *>("preview");
 			if (pv && pv->isVisible()) {
-#ifdef _WIN32
 				RECT r;
 				if (GetWindowRect((HWND)pv->winId(), &r)) {
 					g_prev_l.store((float)r.left);
@@ -2621,12 +2627,12 @@ void add_dock()
 					g_prev_valid.store(true);
 					return;
 				}
-#endif
 			}
 			g_prev_valid.store(false);
 		});
 		prevTimer->start(120);
 	}
+#endif
 
 	// ---- Colors: OBS's "Select Color" basic grid 1:1 (QColorDialog standard
 	//      colors, 8 cols x 6 rows column-major) + the full picker below. The
