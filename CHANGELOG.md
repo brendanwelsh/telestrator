@@ -87,5 +87,5 @@ First release of the native C++ / libobs telestrator.
 - **Markup replay:** save the replay buffer, draw over the clip, replay it
   again, then resume live. No scene switch.
 
-[1.0.1]: https://github.com/brendanwelsh/obs-telestrator/releases/tag/v1.0.1
-[1.0.0]: https://github.com/brendanwelsh/obs-telestrator/releases/tag/v1.0.0
+[1.0.1]: https://github.com/brendanwelsh/obs-telestrator/releases/tag/1.0.1
+[1.0.0]: https://github.com/brendanwelsh/obs-telestrator/releases/tag/1.0.0
