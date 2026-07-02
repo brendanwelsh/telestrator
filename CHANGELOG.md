@@ -36,7 +36,9 @@ Stability, safety, and OBS-ecosystem compliance pass. No feature changes; the
 ### Changed
 - **All user-visible strings are localized** (`data/locale/en-US.ini`) — the
   release zip now ships the `data/` folder, which also removes the startup
-  "Failed to load 'en-US' text" warning. Translations welcome.
+  "Failed to load 'en-US' text" warning. Translations welcome. The zip uses
+  the standard plugin-folder layout: extract into
+  `C:\ProgramData\obs-studio\plugins\`.
 - GitHub Actions CI restored from the current obs-plugintemplate (Windows,
   macOS, Ubuntu builds + format checks).
 - `ENABLE_QT` / `ENABLE_FRONTEND_API` now default ON (a plain `cmake -B build`

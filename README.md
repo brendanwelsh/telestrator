@@ -36,8 +36,9 @@ you draw.
 1. Download `telestrator-x.y.z-windows-x64.zip` from
    [Releases](https://github.com/brendanwelsh/obs-telestrator/releases)
    (needs OBS Studio 31 or newer).
-2. Close OBS and extract the zip into `C:\Program Files\obs-studio\` —
-   it merges into the existing `obs-plugins` and `data` folders.
+2. Close OBS and extract the zip into `C:\ProgramData\obs-studio\plugins\`
+   (create the `plugins` folder if it doesn't exist). You should end up with
+   `...\plugins\telestrator\bin\64bit\telestrator.dll`.
 3. Start OBS. The **Telestrator** docks and the **Draw** pad appear
    automatically.
 
