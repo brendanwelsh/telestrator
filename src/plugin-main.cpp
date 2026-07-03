@@ -199,23 +199,6 @@ std::vector<SimStroke> g_sim_queue;
 SimStroke g_sim_active;
 float g_sim_t = -1.0f; // <0 == idle
 
-// LEGACY input (opt-in, default OFF): draw on a windowed projector or the OBS main
-// preview via global Win32 cursor polling + window-title matching. This is the
-// fragile path inherited from the Lua engine — Windows-only, foreground-dependent,
-// and it couples to OBS UI internals (the "preview" widget + PREVIEW_EDGE_SIZE).
-// CLAUDE.md names it "the single most fragile part"; the dock replaces it. Kept
-// behind a Settings toggle so the projector workflow is recoverable, not the
-// default. When off, none of the polling / title-matching / preview-rect code runs.
-std::atomic<bool> g_legacy_cursor_input{false};
-
-#ifdef _WIN32
-// "Preview mode" rect (legacy only): the OBS main preview widget's physical screen
-// rect, refreshed on the UI thread while g_legacy_cursor_input is on. The whole
-// legacy path is Win32-only, so none of this exists on other platforms.
-std::atomic<bool> g_prev_valid{false};
-std::atomic<float> g_prev_l{0.0f}, g_prev_t{0.0f}, g_prev_w{0.0f}, g_prev_h{0.0f};
-#endif
-
 std::vector<Stroke> g_strokes;    // committed permanent strokes
 std::vector<Stroke> g_redo;       // redo stack
 std::vector<Stroke> g_temp;       // transient fading strokes
@@ -223,7 +206,8 @@ std::unique_ptr<Stroke> g_active; // stroke currently being drawn
 
 float g_clock = 0.0f; // monotonic seconds from video_tick dt
 
-// Projector window-title keyword (const after load; read from UI + legacy poll).
+// Projector window-title keyword: matches the windows closed by the
+// telestrator.closeprojector.* hotkeys (compat contract).
 std::string g_projector_name = "Projector";
 
 struct vec4 g_eraser_v4;
@@ -1085,11 +1069,6 @@ void do_redo_now(TelSource *d)
 // ---------------------------------------------------------------------------
 // Projector close (Win32 WM_CLOSE) + window matching
 // ---------------------------------------------------------------------------
-bool window_match(const char *window_name)
-{
-	return window_name && !g_projector_name.empty() && strstr(window_name, g_projector_name.c_str());
-}
-
 #ifdef _WIN32
 // True if a top-level window OF THIS PROCESS has `match` in its title.
 bool projector_window_exists(const char *match)
@@ -1216,9 +1195,9 @@ void process_commands(TelSource *d)
 }
 
 // ---------------------------------------------------------------------------
-// Input core: feed one canvas-space mouse sample into the stroke path. Shared by
-// the Win32 projector poll (handle_input) and the drawable dock (Qt events), so
-// both surfaces drive the exact same begin/continue/commit logic.
+// Input core: feed one canvas-space mouse sample into the stroke path. Driven by
+// the drawable dock's native Qt events (and scripted sim_stroke playback), so the
+// canonical surface runs the exact begin/continue/commit logic.
 // ---------------------------------------------------------------------------
 void feed_draw(TelSource *d, float mx, float my, bool down)
 {
@@ -1269,100 +1248,6 @@ void feed_draw(TelSource *d, float mx, float my, bool down)
 	d->has_mouse = true;
 	d->mouse_x = mx;
 	d->mouse_y = my;
-}
-
-#ifdef _WIN32
-// OBS's MAIN PREVIEW insets the canvas by a fixed border before letterboxing it
-// into the widget (PREVIEW_EDGE_SIZE, in *physical* px — GetPixelSize multiplies
-// the widget size by devicePixelRatioF, then subtracts the raw edge). Windowed
-// projectors fill edge to edge (edge 0). Match OBS exactly so ink lands precisely
-// under the cursor at the corners, not drifted inward by the border.
-static constexpr float PREVIEW_EDGE_SIZE = 10.0f; // == OBS UI PREVIEW_EDGE_SIZE
-#endif
-
-// Map a client-area-local point (area pixel w/h, minus any letterbox edge inset)
-// to canvas coords and feed it. This mirrors OBS's own GetScaleAndCenterPos +
-// preview edge inset EXACTLY — same aspect branch, same integer truncation of the
-// fitted size and the center offset — so feed_client is the precise inverse of the
-// projector / main-preview renderer and ink lands pixel-exact under the cursor (no
-// sub-pixel drift from float-vs-int rounding). Pass everything in one consistent
-// space: the Win32 paths use physical px on both ends.
-void feed_client(TelSource *d, float local_x, float local_y, float cw, float ch, float edge = 0.0f)
-{
-	int e = (int)edge;
-	int winCX = (int)cw - 2 * e;
-	int winCY = (int)ch - 2 * e;
-	int W = (int)d->width, H = (int)d->height;
-	if (winCX <= 0 || winCY <= 0 || W <= 0 || H <= 0)
-		return;
-	double winAspect = (double)winCX / (double)winCY;
-	double baseAspect = (double)W / (double)H;
-	float scale;
-	int newCX, newCY;
-	if (winAspect > baseAspect) { // window relatively wider -> height-bound (pillarbox L/R)
-		scale = (float)winCY / (float)H;
-		newCX = (int)((double)W * (double)scale);
-		newCY = winCY;
-	} else { // window relatively taller -> width-bound (letterbox T/B)
-		scale = (float)winCX / (float)W;
-		newCX = winCX;
-		newCY = (int)((double)H * (double)scale);
-	}
-	if (scale <= 0.0f)
-		return;
-	float ox = (float)(winCX / 2 - newCX / 2 + e);
-	float oy = (float)(winCY / 2 - newCY / 2 + e);
-	feed_draw(d, (local_x - ox) / scale, (local_y - oy) / scale, true);
-}
-
-// ---------------------------------------------------------------------------
-// LEGACY Win32 cursor input (opt-in via Settings; the dock is canonical) — draws
-// on the windowed projector (window-title match) OR the OBS main preview region
-// ("preview mode"). Global cursor poll, same as the Lua engine. Only reached from
-// video_tick when g_legacy_cursor_input is on.
-// ---------------------------------------------------------------------------
-void handle_input(TelSource *d)
-{
-#ifdef _WIN32
-	bool mouse_down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-	if (!mouse_down) {
-		feed_draw(d, 0.0f, 0.0f, false);
-		return;
-	}
-
-	POINT raw;
-	if (!GetCursorPos(&raw))
-		return;
-	HWND window = GetForegroundWindow();
-	char window_name[512];
-	int wlen = window ? GetWindowTextA(window, window_name, sizeof(window_name)) : 0;
-	if (wlen <= 0)
-		window_name[0] = '\0';
-
-	if (window_match(window_name)) {
-		// Windowed projector: map within its client area.
-		POINT origin = {0, 0};
-		ClientToScreen(window, &origin);
-		RECT rc;
-		GetClientRect(window, &rc);
-		feed_client(d, (float)(raw.x - origin.x), (float)(raw.y - origin.y), (float)(rc.right - rc.left),
-			    (float)(rc.bottom - rc.top));
-		return;
-	}
-
-	// Preview mode: the OBS main window is foreground and the cursor is over the
-	// (locked) main-preview rect. Lock Preview keeps clicks from dragging items.
-	if (g_prev_valid.load() && strncmp(window_name, "OBS ", 4) == 0) {
-		float pl = g_prev_l.load(), pt = g_prev_t.load();
-		float pw = g_prev_w.load(), ph = g_prev_h.load();
-		if ((float)raw.x >= pl && (float)raw.x < pl + pw && (float)raw.y >= pt && (float)raw.y < pt + ph) {
-			feed_client(d, (float)raw.x - pl, (float)raw.y - pt, pw, ph, PREVIEW_EDGE_SIZE);
-		}
-	}
-	// else: not over a drawing surface — ignore (keep any active stroke pending)
-#else
-	(void)d;
-#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -1538,14 +1423,9 @@ void tel_video_tick(void *data, float seconds)
 			// Canonical input: a drag in the Telestrator Draw dock. Draw from its
 			// native Qt coords (written on the UI thread).
 			feed_draw(d, g_dock_mx.load(), g_dock_my.load(), true);
-		} else if (g_legacy_cursor_input.load()) {
-			// Opt-in legacy: windowed-projector / main-preview Win32 cursor poll
-			// (handle_input commits on its own physical mouse-up).
-			handle_input(d);
 		} else {
 			// Dock idle: a dock stroke just released (or nothing active) — commit
-			// any finished stroke. This is the mouse-up the dock relies on, so the
-			// canonical path no longer needs the Win32 button poll to end a stroke.
+			// any finished stroke. This is the mouse-up the dock relies on.
 			feed_draw(d, 0.0f, 0.0f, false);
 		}
 	} else {
@@ -2240,12 +2120,6 @@ static void show_settings_dialog()
 	QObject::connect(op, QOverload<int>::of(&QSpinBox::valueChanged), [](int v) { g_opacity = (float)v / 100.0f; });
 	form->addRow(obs_module_text("Settings.Opacity"), op);
 
-	QCheckBox *legacy = new QCheckBox(dlg);
-	legacy->setChecked(g_legacy_cursor_input.load());
-	legacy->setToolTip(obs_module_text("Settings.LegacyInput.Tip"));
-	QObject::connect(legacy, &QCheckBox::toggled, [](bool v) { g_legacy_cursor_input.store(v); });
-	form->addRow(obs_module_text("Settings.LegacyInput"), legacy);
-
 	QLabel *replayHelp = new QLabel(obs_module_text("Settings.ReplayHelp"), dlg);
 	replayHelp->setWordWrap(true);
 	form->addRow(obs_module_text("Settings.Replay"), replayHelp);
@@ -2602,37 +2476,6 @@ void add_dock()
 			dw->raise();
 		}
 	}
-
-#ifdef _WIN32
-	// LEGACY "preview mode": publish the OBS main-preview screen rect to handle_input
-	// on a UI-thread timer. This reaches into OBS's private widget tree, so it ONLY
-	// runs when the legacy cursor-input path is opted in (default off) — otherwise the
-	// timer is inert and never touches OBS internals. Win32-only, like the whole
-	// legacy input path.
-	if (QMainWindow *mw = static_cast<QMainWindow *>(obs_frontend_get_main_window())) {
-		QTimer *prevTimer = new QTimer(mw);
-		QObject::connect(prevTimer, &QTimer::timeout, [mw]() {
-			if (!g_legacy_cursor_input.load()) {
-				g_prev_valid.store(false);
-				return;
-			}
-			QWidget *pv = mw->findChild<QWidget *>("preview");
-			if (pv && pv->isVisible()) {
-				RECT r;
-				if (GetWindowRect((HWND)pv->winId(), &r)) {
-					g_prev_l.store((float)r.left);
-					g_prev_t.store((float)r.top);
-					g_prev_w.store((float)(r.right - r.left));
-					g_prev_h.store((float)(r.bottom - r.top));
-					g_prev_valid.store(true);
-					return;
-				}
-			}
-			g_prev_valid.store(false);
-		});
-		prevTimer->start(120);
-	}
-#endif
 
 	// ---- Colors: OBS's "Select Color" basic grid 1:1 (QColorDialog standard
 	//      colors, 8 cols x 6 rows column-major) + the full picker below. The

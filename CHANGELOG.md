@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Removed
+- **Legacy Win32 projector / main-preview cursor input.** The opt-in
+  "Legacy projector / preview input" setting and its global cursor-polling /
+  foreground-window-title-matching / OBS-private-widget-tree probing are gone.
+  It was Windows-only and fragile — the exact tradeoff the native, cross-platform
+  **Telestrator Draw** dock was built to replace. The dock is now the single
+  drawing surface on every platform; float or maximize it on a second monitor for
+  a projector-style full-screen pad. Drawing behavior, tools, hotkeys, the
+  `telestrator.*` vocabulary, and the source id are unchanged; the
+  `telestrator.openprojector` / `.closeprojector.*` hotkeys still open/close
+  projector windows.
+
 ## [1.0.1] - 2026-07-02
 
 Stability, safety, and OBS-ecosystem compliance pass. No feature changes; the
