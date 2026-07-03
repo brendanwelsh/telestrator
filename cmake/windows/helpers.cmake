@@ -24,12 +24,10 @@ function(set_target_properties_plugin target)
 
   install(TARGETS ${target} RUNTIME DESTINATION "${target}/bin/64bit" LIBRARY DESTINATION "${target}/bin/64bit")
 
-  install(
-    FILES "$<TARGET_PDB_FILE:${target}>"
-    CONFIGURATIONS RelWithDebInfo Debug Release
-    DESTINATION "${target}/bin/64bit"
-    OPTIONAL
-  )
+  # NB: the debug .pdb is intentionally NOT installed/packaged — end users don't
+  # need it and it bloats the release. It's still built and copied to the local
+  # rundir below for our own debugging. (Removed the upstream template's
+  # install(FILES $<TARGET_PDB_FILE:...>) on purpose.)
 
   if(TARGET plugin-support)
     target_link_libraries(${target} PRIVATE plugin-support)
