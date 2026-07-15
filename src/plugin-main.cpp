@@ -5,7 +5,7 @@ Native C++/libobs port of the Lua engine (obs-telestrator-lua). Lineage:
   * Original obs-whiteboard: Herschel.
   * Second: Tari.
   * Lua port (obs-whiteboard-lua): katarai.
-  * Telestrator + this C++ port: Brendan Welsh.
+  * Telestrator + this C++ port: brendanwelsh.
 MIT licensed — see LICENSE.
 
 Architecture mirrors the Lua engine 1:1:

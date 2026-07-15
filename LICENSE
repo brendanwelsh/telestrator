@@ -3,7 +3,7 @@ MIT License
 Copyright (c) Herschel (obs-whiteboard, original)
 Copyright (c) Tari (obs-whiteboard, second)
 Copyright (c) katarai (obs-whiteboard-lua, Lua port)
-Copyright (c) 2026 Brendan Welsh (obs-telestrator, Lua engine and C++ port)
+Copyright (c) 2026 brendanwelsh (obs-telestrator, Lua engine and C++ port)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
