@@ -32,4 +32,13 @@ mirrors the Lua engine 1:1.
 - Native C++/libobs performance; no LuaJIT dependency.
 
 The last two Lua-only settings (auto-fade, armed indicator) were wired into the
-dock + hotkeys (this commit), so there are no remaining feature gaps.
+dock + hotkeys, so there are no remaining feature gaps.
+
+**One deliberate divergence — the drawing surface.** The Lua engine only let you
+draw by polling the global cursor over a **windowed projector** (Windows-only,
+foreground-dependent). The C++ port replaces that mechanism with the native,
+cross-platform **Telestrator Draw** dock (float or maximize it on a second
+monitor for the same projector-style feel). The end capability — draw on the live
+output — is preserved and improved; the Windows-only projector/preview
+cursor-polling path was removed rather than carried over, so the plugin is clean
+cross-platform for the OBS resource directory.

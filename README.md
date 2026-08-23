@@ -2,7 +2,7 @@
   <img src="assets/chum-logo.png" width="104" alt="chumthewaters" />
 </p>
 
-<h1 align="center">OBS Telestrator</h1>
+<h1 align="center">Telestrator for OBS Studio</h1>
 
 <p align="center">
   <strong>Draw on your live output in <a href="https://obsproject.com">OBS Studio</a>,<br>
@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <img src="demo/demo.gif" width="720" alt="OBS Telestrator demo" />
+  <img src="demo/demo.gif" width="720" alt="Telestrator for OBS Studio demo" />
 </p>
 
 ## What it is
@@ -33,14 +33,18 @@ you draw.
 
 ## Install
 
-1. Download `telestrator-x.y.z-windows-x64.zip` from
-   [Releases](https://github.com/brendanwelsh/obs-telestrator/releases)
-   (needs OBS Studio 31 or newer).
-2. Close OBS and extract the zip into `C:\ProgramData\obs-studio\plugins\`
-   (create the `plugins` folder if it doesn't exist). You should end up with
-   `...\plugins\telestrator\bin\64bit\telestrator.dll`.
-3. Start OBS. The **Telestrator** docks and the **Draw** pad appear
-   automatically.
+Needs OBS Studio 31 or newer. Grab either from
+[Releases](https://github.com/brendanwelsh/obs-telestrator/releases):
+
+- **Installer (recommended):** run `telestrator-x.y.z-windows-x64-Installer.exe`.
+  Close OBS first; it installs into `C:\ProgramData\obs-studio\plugins\telestrator\`
+  and adds an uninstall entry.
+- **Zip:** close OBS and extract `telestrator-x.y.z-windows-x64.zip` into
+  `C:\ProgramData\obs-studio\plugins\` (create the `plugins` folder if it doesn't
+  exist). You should end up with `...\plugins\telestrator\bin\64bit\telestrator.dll`.
+
+Then start OBS — the **Telestrator** docks and the **Draw** pad appear
+automatically.
 
 On macOS or Linux, [build from source](#build-from-source).
 
@@ -94,10 +98,8 @@ Stream Deck and the docks follow):
 - **Color** — the Select Color swatch grid; the active ink is ringed.
 - **Replay** — scene add/remove, arm, the replay flow, and settings.
 - **Draw** — the drawing pad. Right-click for Fit or Fill; drag it out to float
-  on its own monitor.
-
-Prefer a projector? Enable the legacy projector input in settings (the gear in
-the Replay dock).
+  on its own monitor (or maximize it there for a projector-style full-screen
+  drawing surface).
 
 ## Hotkeys and controllers
 
@@ -114,7 +116,7 @@ list is in [`docs/STREAMDECK-SPEC.md`](docs/STREAMDECK-SPEC.md).
 ## Settings
 
 The gear in the Replay dock: auto-fade after N seconds, armed indicator dot,
-default ink opacity, and the legacy projector/preview input (off by default).
+and default ink opacity.
 
 ## Build from source
 
